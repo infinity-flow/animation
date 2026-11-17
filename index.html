@@ -156,7 +156,7 @@ const mat = new THREE.ShaderMaterial({
       gl_Position = projectionMatrix * mv;
       float depth = sin(th);                                   // -1 pozadi, +1 napred
       gl_PointSize = aSize * uPx * (1.0 + 0.3 * depth) * (10.0 / -mv.z);
-      vColor = mix(aColor, vec3(1.0), 0.3 * (1.0 - depth) * 0.5);   // zadnje svetlije
+      vColor = mix(aColor, vec3(1.0), 0.12 * (1.0 - depth) * 0.5);   // zadnje svetlije
       vAlpha = (0.78 + 0.22 * depth) * smoothstep(0.0, 0.06, t) * smoothstep(1.0, 0.94, t);
     }`,
   fragmentShader: /* glsl */`
@@ -168,6 +168,7 @@ const mat = new THREE.ShaderMaterial({
       float a = smoothstep(0.5, 0.2, d) * vAlpha;
       if (a < 0.08) discard;
       gl_FragColor = vec4(vColor, a);
+      #include <colorspace_fragment>
     }`,
 });
 
