@@ -22,8 +22,9 @@ const CONFIG = {
   flowSpeed: 0.04,        // brzina kretanja cestica nagore
   twistSpeed: 0.9,        // brzina uvijanja linija jedna oko druge
   blueShare: 0.62,        // udeo plavih cestica (ostalo tamne) - boje su izmesane
-  particlesPerStrand: 20000,
-  thickness: 0.085,       // debljina linije
+  particlesPerStrand: 24000,
+  thickness: 0.2,         // debljina linije
+  coreHollow: 0.35,       // koliko je centar linije redji (0 = pun, 1 = skoro prazan)
   length: 12,             // duzina linija (prelaze ivice ekrana)
   blue: '#106ACA',
   dark: '#14171A',
@@ -87,8 +88,12 @@ STRANDS.forEach((st) => {
     aS[i] = Math.random();
     aStA.set([st.r, st.f, st.ph, st.spin], i * 4);
     aStB.set([st.ra, st.rk, st.wa, st.wk], i * 4);
-    const spread = CONFIG.thickness * st.thick * (Math.random() < 0.07 ? 2.8 : 1.0);
-    aOff.set([gauss() * spread, gauss() * spread * 0.6, gauss() * spread], i * 3);
+    // cestice su rasporedjene kao cev: vise ka ivicama, redje u samom centru linije
+    const spread = CONFIG.thickness * st.thick * (Math.random() < 0.06 ? 1.8 : 1.0);
+    const rad = spread * (CONFIG.coreHollow + (1 - CONFIG.coreHollow) * Math.sqrt(Math.random()));
+    const dv = new THREE.Vector3(gauss(), gauss() * 0.6, gauss()).normalize();
+    const jit = spread * 0.12;
+    aOff.set([dv.x * rad + gauss() * jit, dv.y * rad + gauss() * jit, dv.z * rad + gauss() * jit], i * 3);
     // nasumican pravac za rasipanje
     const v = new THREE.Vector3(gauss(), gauss(), gauss()).normalize();
     aRand.set([v.x, v.y, v.z, 0.4 + Math.random() * 1.2], i * 4);

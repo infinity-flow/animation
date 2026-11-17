@@ -19,6 +19,7 @@ npx serve .
 | `twistSpeed` | brzina uvijanja linija jedna oko druge |
 | `particlesPerStrand` | gustina čestica po liniji |
 | `thickness` | debljina linije |
+| `coreHollow` | koliko je centar linije ređi |
 | `blue`, `dark`, `blueShare` | dve boje, izmešane; udeo plave |
 | `STRANDS[]` | oblik svake linije posebno (poluprečnik, gustina uvijanja, brzina, vijuganje, debljina) |
 | `mouseRadius` | koliko daleko od kursora čestice beže |
