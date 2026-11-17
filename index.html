@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="sr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Particle Strands</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #ffffff; overflow: hidden; }
+  canvas { display: block; }
+</style>
+</head>
+<body>
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.min.js" } }
+</script>
+<script type="module">
+import * as THREE from 'three';
+
+// ---------- Parametri (lako podesivi) ----------
+const CONFIG = {
+  tiltDeg: 16,          // nagib ose: vrh se naginje ulevo (kao strelice na skici)
+  flowSpeed: 0.035,     // brzina kretanja cestica nagore
+  twistSpeed: 0.35,     // brzina uvijanja/preplitanja linija
+  particlesPerStrand: 18000,
+  thickness: 0.1,     // debljina linije (rasipanje cestica)
+  length: 11,           // duzina linija (prelaze ivice ekrana)
+  colors: ['#4f86ea', '#5b8def', '#3f74de', '#6f9ef3'],
+};
+
+// Svaka linija: poluprecnik uvijanja, frekvencija, faza, pomak od ose
+const STRANDS = [
+  { r: 0.95, w: 0.95, ph: 0.0,  dx: 0.00 },
+  { r: 0.95, w: 0.95, ph: Math.PI, dx: 0.00 },
+  { r: 0.55, w: 0.80, ph: 1.6,  dx: 0.15 },
+  { r: 0.22, w: 0.60, ph: 4.2,  dx: -0.35 },
+  { r: 0.30, w: 0.70, ph: 2.6,  dx: 0.55 },
+];
+
+const params = new URLSearchParams(location.search);
+const STILL = params.has('t');           // ?t=12 -> staticni kadar (za skicu)
+const fixedTime = parseFloat(params.get('t')) || 0;
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: STILL });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setClearColor(0xffffff, 1);
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(35, 1, 0.1, 100);
+camera.position.set(0, 0, 10);
+
+// Osa preplitanja
+const tilt = THREE.MathUtils.degToRad(CONFIG.tiltDeg);
+const dir = new THREE.Vector3(-Math.sin(tilt), Math.cos(tilt), 0);
+const uAxis = new THREE.Vector3(Math.cos(tilt), Math.sin(tilt), 0);
+const wAxis = new THREE.Vector3(0, 0, 1);
+
+// Gausov sum za prirodnu "kredastu" ivicu
+const gauss = () => {
+  let u = 0, v = 0;
+  while (u === 0) u = Math.random();
+  while (v === 0) v = Math.random();
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+};
+
+const total = STRANDS.length * CONFIG.particlesPerStrand;
+const aS = new Float32Array(total);
+const aStrand = new Float32Array(total * 4);   // r, w, ph, dx
+const aOff = new Float32Array(total * 3);
+const aSize = new Float32Array(total);
+const aSpeed = new Float32Array(total);
+const aColor = new Float32Array(total * 3);
+const palette = CONFIG.colors.map(c => new THREE.Color(c));
+
+let i = 0;
+STRANDS.forEach((st) => {
+  for (let k = 0; k < CONFIG.particlesPerStrand; k++, i++) {
+    aS[i] = Math.random();
+    aStrand.set([st.r, st.w, st.ph, st.dx], i * 4);
+    const spread = CONFIG.thickness * (Math.random() < 0.08 ? 2.6 : 1.0);
+    aOff.set([gauss() * spread, gauss() * spread * 0.6, gauss() * spread], i * 3);
+    aSize[i] = 0.6 + Math.random() * Math.random() * 1.8;
+    aSpeed[i] = 0.85 + Math.random() * 0.3;
+    const c = palette[(Math.random() * palette.length) | 0].clone()
+      .offsetHSL((Math.random() - 0.5) * 0.02, 0, (Math.random() - 0.5) * 0.08);
+    aColor.set([c.r, c.g, c.b], i * 3);
+  }
+});
+
+const geo = new THREE.BufferGeometry();
+geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(total * 3), 3));
+geo.setAttribute('aS', new THREE.BufferAttribute(aS, 1));
+geo.setAttribute('aStrand', new THREE.BufferAttribute(aStrand, 4));
+geo.setAttribute('aOff', new THREE.BufferAttribute(aOff, 3));
+geo.setAttribute('aSize', new THREE.BufferAttribute(aSize, 1));
+geo.setAttribute('aSpeed', new THREE.BufferAttribute(aSpeed, 1));
+geo.setAttribute('aColor', new THREE.BufferAttribute(aColor, 3));
+
+const mat = new THREE.ShaderMaterial({
+  transparent: true,
+  depthWrite: false,
+  uniforms: {
+    uTime: { value: 0 },
+    uLen: { value: CONFIG.length },
+    uFlow: { value: CONFIG.flowSpeed },
+    uTwist: { value: CONFIG.twistSpeed },
+    uCenter: { value: new THREE.Vector3() },
+    uDir: { value: dir },
+    uU: { value: uAxis },
+    uW: { value: wAxis },
+    uPx: { value: 1 },
+  },
+  vertexShader: /* glsl */`
+    attribute float aS; attribute vec4 aStrand; attribute vec3 aOff;
+    attribute float aSize; attribute float aSpeed; attribute vec3 aColor;
+    uniform float uTime, uLen, uFlow, uTwist, uPx;
+    uniform vec3 uCenter, uDir, uU, uW;
+    varying vec3 vColor; varying float vAlpha;
+    void main() {
+      float t = fract(aS + uTime * uFlow * aSpeed);   // tok nagore
+      float s = (t - 0.5) * uLen;
+      float r = aStrand.x * (1.0 + 0.22 * sin(s * 0.55 + aStrand.z));
+      float th = aStrand.y * s + aStrand.z - uTime * uTwist;  // uvijanje
+      vec3 p = uCenter + uDir * s + uU * aStrand.w
+             + r * (cos(th) * uU + sin(th) * uW) + aOff;
+      vec4 mv = modelViewMatrix * vec4(p, 1.0);
+      gl_Position = projectionMatrix * mv;
+      float depth = sin(th);                          // napred / pozadi
+      gl_PointSize = aSize * uPx * (1.0 + 0.18 * depth) * (10.0 / -mv.z);
+      vColor = mix(aColor, vec3(0.62, 0.74, 0.96), 0.18 * (1.0 - depth) * 0.5);
+      vAlpha = (0.75 + 0.2 * depth) * smoothstep(0.0, 0.08, t) * smoothstep(1.0, 0.92, t);
+    }`,
+  fragmentShader: /* glsl */`
+    varying vec3 vColor; varying float vAlpha;
+    void main() {
+      vec2 c = gl_PointCoord - 0.5;
+      float d = length(c);
+      if (d > 0.5) discard;
+      float a = smoothstep(0.5, 0.15, d) * vAlpha;
+      gl_FragColor = vec4(vColor, a);
+    }`,
+});
+
+const points = new THREE.Points(geo, mat);
+points.frustumCulled = false;
+scene.add(points);
+
+function resize() {
+  const w = innerWidth, h = innerHeight;
+  renderer.setSize(w, h);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  const visH = 2 * camera.position.z * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+  const visW = visH * camera.aspect;
+  // na sirokom ekranu linije su desno (kao na skici), na uskom u sredini
+  mat.uniforms.uCenter.value.set(camera.aspect > 1.2 ? visW * 0.2 : 0, 0, 0);
+  mat.uniforms.uPx.value = renderer.getPixelRatio() * Math.max(1.4, h / 540);
+}
+addEventListener('resize', resize);
+resize();
+
+const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const clock = new THREE.Clock();
+function frame() {
+  mat.uniforms.uTime.value = STILL ? fixedTime : clock.getElapsedTime() * (reduced ? 0.2 : 1);
+  renderer.render(scene, camera);
+  if (!STILL) requestAnimationFrame(frame);
+}
+frame();
+</script>
+</body>
+</html>
