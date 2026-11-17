@@ -21,8 +21,7 @@ const CONFIG = {
   tiltDeg: 16,            // nagib ose: vrh se naginje ulevo
   flowSpeed: 0.04,        // brzina kretanja cestica nagore
   twistSpeed: 0.9,        // brzina uvijanja linija jedna oko druge
-  twistsPerUnit: 1.25,    // koliko su gusto uvrnute (vise = vise ukrstanja)
-  braidRadius: 0.75,      // poluprecnik preplitanja
+  blueShare: 0.62,        // udeo plavih cestica (ostalo tamne) - boje su izmesane
   particlesPerStrand: 20000,
   thickness: 0.085,       // debljina linije
   length: 12,             // duzina linija (prelaze ivice ekrana)
@@ -34,12 +33,16 @@ const CONFIG = {
   mouseRecover: 1.6,      // brzina vracanja u liniju (vise = brze)
 };
 
-// 4 linije ravnomerno rasporedjene oko ose; boje se smenjuju plava / tamna
-const STRANDS = [0, 1, 2, 3].map(k => ({
-  ph: k * Math.PI / 2,
-  main: k % 2 === 0 ? CONFIG.blue : CONFIG.dark,
-  accent: k % 2 === 0 ? CONFIG.dark : CONFIG.blue,
-}));
+// 4 linije, svaka svoja (asimetricno):
+// r  = poluprecnik oko ose, f = koliko je gusto uvrnuta, ph = pocetni ugao,
+// spin = sopstvena brzina uvijanja, ra/rk = kako se poluprecnik menja duz linije,
+// wa/wk = sopstveno vijuganje linije, thick = debljina
+const STRANDS = [
+  { r: 0.85, f: 1.05, ph: 0.0, spin: 1.00, ra: 0.35, rk: 0.55, wa: 0.18, wk: 0.70, thick: 1.15 },
+  { r: 0.55, f: 1.30, ph: 2.1, spin: 1.12, ra: 0.45, rk: 0.80, wa: 0.25, wk: 0.45, thick: 0.85 },
+  { r: 1.05, f: 0.85, ph: 3.6, spin: 0.90, ra: 0.25, rk: 0.40, wa: 0.15, wk: 0.95, thick: 1.0 },
+  { r: 0.40, f: 1.45, ph: 5.0, spin: 1.20, ra: 0.55, rk: 1.10, wa: 0.30, wk: 0.60, thick: 0.75 },
+];
 
 const params = new URLSearchParams(location.search);
 const STILL = params.has('t');           // ?t=12 -> staticni kadar
@@ -69,7 +72,8 @@ const gauss = () => {
 
 const total = STRANDS.length * CONFIG.particlesPerStrand;
 const aS = new Float32Array(total);
-const aPh = new Float32Array(total);
+const aStA = new Float32Array(total * 4);
+const aStB = new Float32Array(total * 4);
 const aOff = new Float32Array(total * 3);
 const aRand = new Float32Array(total * 4);
 const aSize = new Float32Array(total);
@@ -78,18 +82,19 @@ const aColor = new Float32Array(total * 3);
 
 let i = 0;
 STRANDS.forEach((st) => {
-  const main = new THREE.Color(st.main), accent = new THREE.Color(st.accent);
+  const blue = new THREE.Color(CONFIG.blue), dark = new THREE.Color(CONFIG.dark);
   for (let k = 0; k < CONFIG.particlesPerStrand; k++, i++) {
     aS[i] = Math.random();
-    aPh[i] = st.ph;
-    const spread = CONFIG.thickness * (Math.random() < 0.07 ? 2.8 : 1.0);
+    aStA.set([st.r, st.f, st.ph, st.spin], i * 4);
+    aStB.set([st.ra, st.rk, st.wa, st.wk], i * 4);
+    const spread = CONFIG.thickness * st.thick * (Math.random() < 0.07 ? 2.8 : 1.0);
     aOff.set([gauss() * spread, gauss() * spread * 0.6, gauss() * spread], i * 3);
     // nasumican pravac za rasipanje
     const v = new THREE.Vector3(gauss(), gauss(), gauss()).normalize();
     aRand.set([v.x, v.y, v.z, 0.4 + Math.random() * 1.2], i * 4);
     aSize[i] = 0.6 + Math.random() * Math.random() * 1.8;
     aSpeed[i] = 0.85 + Math.random() * 0.3;
-    const c = (Math.random() < 0.18 ? accent : main).clone()
+    const c = (Math.random() < CONFIG.blueShare ? blue : dark).clone()
       .offsetHSL(0, 0, (Math.random() - 0.5) * 0.08);
     aColor.set([c.r, c.g, c.b], i * 3);
   }
@@ -98,7 +103,8 @@ STRANDS.forEach((st) => {
 const geo = new THREE.BufferGeometry();
 geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(total * 3), 3));
 geo.setAttribute('aS', new THREE.BufferAttribute(aS, 1));
-geo.setAttribute('aPh', new THREE.BufferAttribute(aPh, 1));
+geo.setAttribute('aStA', new THREE.BufferAttribute(aStA, 4));
+geo.setAttribute('aStB', new THREE.BufferAttribute(aStB, 4));
 geo.setAttribute('aOff', new THREE.BufferAttribute(aOff, 3));
 geo.setAttribute('aRand', new THREE.BufferAttribute(aRand, 4));
 geo.setAttribute('aSize', new THREE.BufferAttribute(aSize, 1));
@@ -113,8 +119,6 @@ const mat = new THREE.ShaderMaterial({
     uLen: { value: CONFIG.length },
     uFlow: { value: CONFIG.flowSpeed },
     uTwist: { value: CONFIG.twistSpeed },
-    uFreq: { value: CONFIG.twistsPerUnit },
-    uR: { value: CONFIG.braidRadius },
     uCenter: { value: new THREE.Vector3() },
     uDir: { value: dir },
     uU: { value: uAxis },
@@ -126,18 +130,21 @@ const mat = new THREE.ShaderMaterial({
     uMouseS: { value: CONFIG.mouseStrength },
   },
   vertexShader: /* glsl */`
-    attribute float aS; attribute float aPh; attribute vec3 aOff; attribute vec4 aRand;
+    attribute float aS; attribute vec4 aStA; attribute vec4 aStB; attribute vec3 aOff; attribute vec4 aRand;
     attribute float aSize; attribute float aSpeed; attribute vec3 aColor;
-    uniform float uTime, uLen, uFlow, uTwist, uFreq, uR, uPx, uForce, uMouseR, uMouseS;
+    uniform float uTime, uLen, uFlow, uTwist, uPx, uForce, uMouseR, uMouseS;
     uniform vec3 uCenter, uDir, uU, uW, uMouse;
     varying vec3 vColor; varying float vAlpha;
     void main() {
       float t = fract(aS + uTime * uFlow * aSpeed);          // tok nagore
       float s = (t - 0.5) * uLen;
-      float th = uFreq * s + aPh - uTime * uTwist;             // uvijanje oko ose
-      // pletenica: poluprecnik "dise" pa linije ulaze jedna u drugu
-      float r = uR * (1.0 + 0.32 * sin(2.0 * th + uTime * 0.6));
-      vec3 p = uCenter + uDir * s + r * (cos(th) * uU + sin(th) * uW) + aOff;
+      // svaka linija ima svoj ugao, gustinu i brzinu uvijanja
+      float th = aStA.y * s + aStA.z - uTime * uTwist * aStA.w;
+      // poluprecnik se menja duz linije (ne pulsira u vremenu)
+      float r = aStA.x * (1.0 + aStB.x * sin(aStB.y * s + aStA.z * 1.7));
+      // sopstveno vijuganje linije, nezavisno od ostalih
+      float wob = aStB.z * sin(aStB.w * s + aStA.z * 2.3);
+      vec3 p = uCenter + uDir * s + uU * wob + r * (cos(th) * uU + sin(th) * uW) + aOff;
 
       // rasipanje oko kursora
       vec2 d = p.xy - uMouse.xy;
