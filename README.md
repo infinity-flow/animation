@@ -16,7 +16,11 @@ npx serve .
 |---|---|
 | `tiltDeg` | nagib ose (vrh ulevo) |
 | `flowSpeed` | brzina kretanja čestica nagore |
-| `twistSpeed` | brzina uvijanja linija jedna oko druge |
+| `speedVariety` | razlika u brzini između čestica |
+| `orbitSpeed` | kruženje čestica unutar linije |
+| `wander` | slobodno lutanje čestica |
+| `pathDrift` | koliko se putanje linija menjaju u vremenu |
+| `twistSpeed` | koliko se sam oblik okreće |
 | `particlesPerStrand` | gustina čestica po liniji |
 | `thickness` | debljina linije |
 | `coreHollow` | koliko je centar linije ređi |
