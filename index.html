@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Particle Strands</title>
 <style>
-  html, body { margin: 0; height: 100%; background: #191919; overflow: hidden; }
+  html, body { margin: 0; height: 100%; background: #ffffff; overflow: hidden; }
   canvas { display: block; touch-action: none; }
 </style>
 </head>
@@ -37,7 +37,14 @@ const CONFIG = {
   thickness: 0.2,         // debljina linije
   coreHollow: 0.35,       // koliko je centar linije redji (0 = pun, 1 = skoro prazan)
   length: 12,             // duzina linija (prelaze ivice ekrana)
-  background: '#191919',  // boja pozadine
+  background: '#ffffff',  // boja pozadine
+  // Shader efekat preko cele slike (0 = iskljuceno)
+  fxWarp: 1.0,            // tecno talasanje slike
+  fxGlow: 0.45,           // mekani sjaj / oreol oko cestica
+  fxChroma: 1.0,          // prelivanje boja (RGB pomak) ka ivicama
+  fxGrain: 0.035,         // filmsko zrno
+  fxRipple: 1.0,          // talasi oko misa
+  fxVignette: 0.12,       // blago zatamnjenje uglova
   blue: '#106ACA',
   dark: '#14171A',
   // Mis: rasipanje cestica
@@ -63,7 +70,8 @@ const fixedTime = parseFloat(params.get('t')) || 0;
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: STILL });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-renderer.setClearColor(CONFIG.background, 1);
+// scena se crta u sRGB vrednostima (zbog efekta), pa i pozadina mora biti u sRGB
+renderer.setClearColor(new THREE.Color(CONFIG.background).convertLinearToSRGB(), 1);
 document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
@@ -231,7 +239,7 @@ const mat = new THREE.ShaderMaterial({
       gl_Position = projectionMatrix * mv;
       float depth = sin(th);                                   // -1 pozadi, +1 napred
       gl_PointSize = aSize * uPx * (1.0 + 0.3 * depth) * (10.0 / -mv.z);
-      vColor = mix(aColor, uBg, 0.25 * (1.0 - depth) * 0.5);   // zadnje se gube u pozadini
+      vColor = mix(aColor, uBg, 0.15 * (1.0 - depth) * 0.5);   // zadnje se gube u pozadini
       float ends = smoothstep(0.0, 0.06, t) * smoothstep(1.0, 0.94, t);
       vAlpha = (0.78 + 0.22 * depth) * mix(1.0, ends, merge) * strayAlpha;
     }`,
@@ -243,8 +251,9 @@ const mat = new THREE.ShaderMaterial({
       if (d > 0.5) discard;
       float a = smoothstep(0.5, 0.2, d) * vAlpha;
       if (a < 0.08) discard;
-      gl_FragColor = vec4(vColor, a);
-      #include <colorspace_fragment>
+      // boje se kodiraju u sRGB ovde, pa se mesanje radi isto kao bez efekta
+      vec3 srgb = mix(vColor * 12.92, 1.055 * pow(vColor, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, vColor));
+      gl_FragColor = vec4(srgb, a);
     }`,
 });
 
@@ -252,9 +261,79 @@ const points = new THREE.Points(geo, mat);
 points.frustumCulled = false;
 scene.add(points);
 
+// ---------- Shader efekat preko cele slike (post-processing) ----------
+const rt = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: 4 });
+const fxScene = new THREE.Scene();
+const fxCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+const fx = new THREE.ShaderMaterial({
+  depthTest: false,
+  depthWrite: false,
+  uniforms: {
+    tScene: { value: rt.texture },
+    uRes: { value: new THREE.Vector2(1, 1) },
+    uTime: { value: 0 },
+    uMouseUV: { value: new THREE.Vector2(-1, -1) },
+    uForce: { value: 0 },
+    uWarp: { value: CONFIG.fxWarp },
+    uGlow: { value: CONFIG.fxGlow },
+    uChroma: { value: CONFIG.fxChroma },
+    uGrain: { value: CONFIG.fxGrain },
+    uRipple: { value: CONFIG.fxRipple },
+    uVignette: { value: CONFIG.fxVignette },
+    uBgS: { value: new THREE.Color().setStyle(CONFIG.background, THREE.SRGBColorSpace).convertLinearToSRGB() },
+  },
+  vertexShader: /* glsl */`
+    varying vec2 vUv;
+    void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`,
+  fragmentShader: /* glsl */`
+    uniform sampler2D tScene;
+    uniform vec2 uRes, uMouseUV;
+    uniform vec3 uBgS;
+    uniform float uTime, uForce, uWarp, uGlow, uChroma, uGrain, uRipple, uVignette;
+    varying vec2 vUv;
+    float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+    void main() {
+      vec2 uv = vUv;
+      float aspect = uRes.x / uRes.y;
+      // tecno talasanje
+      uv += uWarp * 0.0022 * vec2(sin(uv.y * 11.0 + uTime * 1.1) + sin(uv.y * 23.0 - uTime * 0.7) * 0.5,
+                                  cos(uv.x * 9.0 - uTime * 0.9) + cos(uv.x * 19.0 + uTime * 1.3) * 0.5);
+      // talasi oko misa
+      vec2 dm = (uv - uMouseUV) * vec2(aspect, 1.0);
+      float d = length(dm);
+      uv += uRipple * normalize(dm + 1e-5) / vec2(aspect, 1.0)
+            * sin(d * 70.0 - uTime * 9.0) * exp(-d * 7.0) * uForce * 0.006;
+      // RGB pomak, jaci ka ivicama
+      vec2 dir = (uv - 0.5);
+      vec2 ca = dir * uChroma * 0.0016 * smoothstep(0.15, 0.7, length(dir));
+      vec3 col = vec3(texture2D(tScene, uv + ca).r, texture2D(tScene, uv).g, texture2D(tScene, uv - ca).b);
+      // van ivica slike (zbog talasanja) prikazi boju pozadine, bez razvucenih traka
+      vec2 inb = step(vec2(0.0), uv) * step(uv, vec2(1.0));
+      col = mix(uBgS, col, inb.x * inb.y);
+      // mekani sjaj: zamucena slika pomnozena preko (na beloj pozadini daje plavi oreol)
+      vec3 blur = vec3(0.0);
+      vec2 px = 1.0 / uRes;
+      for (int i = 0; i < 12; i++) {
+        float a = float(i) * 0.5236;
+        blur += texture2D(tScene, uv + vec2(cos(a), sin(a)) * px * 9.0).rgb;
+        blur += texture2D(tScene, uv + vec2(cos(a + 0.26), sin(a + 0.26)) * px * 20.0).rgb;
+      }
+      blur /= 24.0;
+      col *= mix(vec3(1.0), blur, uGlow);
+      // vinjeta i zrno
+      col *= 1.0 - uVignette * smoothstep(0.35, 0.95, length(dir * vec2(aspect * 0.75, 1.0)));
+      col += (hash(vUv * uRes + fract(uTime) * 100.0) - 0.5) * uGrain;
+      gl_FragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
+    }`,
+});
+fxScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), fx));
+
 function resize() {
   const w = innerWidth, h = innerHeight;
   renderer.setSize(w, h);
+  const pr = renderer.getPixelRatio();
+  rt.setSize(Math.round(w * pr), Math.round(h * pr));
+  fx.uniforms.uRes.value.set(w * pr, h * pr);
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
   const visH = 2 * camera.position.z * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
@@ -283,6 +362,7 @@ function onPointer(e) {
     energy = Math.min(1, energy + speed / 120);
   }
   lastX = e.clientX; lastY = e.clientY;
+  fx.uniforms.uMouseUV.value.set(e.clientX / innerWidth, 1 - e.clientY / innerHeight);
 }
 addEventListener('pointermove', onPointer);
 addEventListener('pointerdown', (e) => { onPointer(e); energy = 1; });
@@ -300,7 +380,12 @@ function frame() {
   energy *= Math.exp(-dt * CONFIG.mouseRecover);
   u.uForce.value = force;
   u.uMouse.value.lerp(target, Math.min(1, dt * 12));
+  renderer.setRenderTarget(rt);
   renderer.render(scene, camera);
+  renderer.setRenderTarget(null);
+  fx.uniforms.uTime.value = u.uTime.value;
+  fx.uniforms.uForce.value = force;
+  renderer.render(fxScene, fxCam);
   if (!STILL) requestAnimationFrame(frame);
 }
 frame();
