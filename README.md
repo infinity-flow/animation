@@ -1,6 +1,6 @@
 # Particle Strands (three.js)
 
-4 asimetrične linije od izmešanih čestica (#106ACA i #14171A) koje se uvijaju jedna oko druge i teku nagore pod uglom, na beloj pozadini. Pojedine svetloplave čestice se pojavljuju 200–300px od linija i vrate nazad u tok. Kada pređeš mišem (ili prstom), čestice se razlete na sve strane i zatim vrate u linije.
+4 asimetrične linije od izmešanih čestica (#106ACA i #14171A) koje se uvijaju jedna oko druge i teku nagore pod uglom, na tamnoj pozadini (#191919). Pojedine svetloplave čestice se pojavljuju 200–300px od linija i vrate nazad u tok. Kada pređeš mišem (ili prstom), čestice se razlete na sve strane i zatim vrate u linije.
 
 ## Pokretanje
 Otvori `index.html` u browseru (three.js se učitava sa CDN-a), ili lokalno:
@@ -24,6 +24,7 @@ npx serve .
 | `particlesPerStrand` | gustina čestica po liniji |
 | `thickness` | debljina linije |
 | `coreHollow` | koliko je centar linije ređi |
+| `background` | boja pozadine |
 | `blue`, `dark`, `blueShare` | dve boje, izmešane; udeo plave |
 | `STRANDS[]` | oblik svake linije posebno (poluprečnik, gustina uvijanja, brzina, vijuganje, debljina) |
 | `strayPerStrand` | broj čestica koje se pojave pored linija i vrate u tok |
