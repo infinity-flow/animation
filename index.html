@@ -25,10 +25,13 @@ const CONFIG = {
   orbitSpeed: 1.6,        // koliko brzo cestice kruze unutar linije
   wander: 0.07,           // slobodno lutanje svake cestice
   pathDrift: 0.35,        // koliko se putanja linija polako menja u vremenu
-  // Zalutale cestice: pojave se bilo gde na strani i odlete nazad u tok
+  // Zalutale cestice: pojave se 200-300px od linija i vrate se nazad u tok
   strayPerStrand: 1500,   // broj takvih cestica po liniji
   strayLifeMin: 5,        // najkraci ciklus (sekunde): pojava -> povratak u tok
   strayLifeMax: 10,       // najduzi ciklus
+  strayDistMin: 200,      // najmanja udaljenost od linija (px)
+  strayDistMax: 300,      // najveca udaljenost od linija (px)
+  strayColor: '#7DB8F2',  // svetlo plava za sve zalutale cestice
   blueShare: 0.62,        // udeo plavih cestica (ostalo tamne) - boje su izmesane
   particlesPerStrand: 24000,
   thickness: 0.2,         // debljina linije
@@ -122,6 +125,8 @@ STRANDS.forEach((st) => {
       .offsetHSL(0, 0, (rand() - 0.5) * 0.08);
     aColor.set([c.r, c.g, c.b], i * 3);
     if (k >= CONFIG.particlesPerStrand) {
+      const sc = new THREE.Color(CONFIG.strayColor);
+      aColor.set([sc.r, sc.g, sc.b], i * 3);
       const life = CONFIG.strayLifeMin + rand() * (CONFIG.strayLifeMax - CONFIG.strayLifeMin);
       aStray.set([1, life, rand(), rand() * 1000], i * 4);
     }
@@ -157,6 +162,8 @@ const mat = new THREE.ShaderMaterial({
     uPx: { value: 1 },
     uMouse: { value: new THREE.Vector3(999, 999, 0) },
     uHalf: { value: new THREE.Vector2(5, 3) },
+    uPxWorld: { value: 0.01 },
+    uStrayDist: { value: new THREE.Vector2(CONFIG.strayDistMin, CONFIG.strayDistMax) },
     uForce: { value: 0 },
     uMouseR: { value: CONFIG.mouseRadius },
     uMouseS: { value: CONFIG.mouseStrength },
@@ -164,7 +171,7 @@ const mat = new THREE.ShaderMaterial({
   vertexShader: /* glsl */`
     attribute float aS; attribute vec4 aStA; attribute vec4 aStB; attribute vec4 aOrb; attribute vec4 aRand;
     attribute float aSize; attribute float aSpeed; attribute vec3 aColor; attribute vec4 aStray;
-    uniform vec2 uHalf;
+    uniform vec2 uHalf, uStrayDist; uniform float uPxWorld;
     vec3 hash3(vec2 q) {
       return fract(sin(vec3(dot(q, vec2(127.1, 311.7)), dot(q, vec2(269.5, 183.3)), dot(q, vec2(419.2, 371.9)))) * 43758.5453);
     }
@@ -198,14 +205,16 @@ const mat = new THREE.ShaderMaterial({
         float c = uTime / aStray.y + aStray.z;
         float u = fract(c);
         vec3 h = hash3(vec2(aStray.w, floor(c)));
-        vec3 start = vec3((h.x * 2.0 - 1.0) * uHalf.x, (h.y * 2.0 - 1.0) * uHalf.y, (h.z * 2.0 - 1.0) * 1.5);
-        start += 0.08 * vec3(sin(uTime * 0.8 + aStray.w), cos(uTime * 0.7 + aStray.w * 1.3), 0.0);
+        // pojavi se 200-300px levo ili desno od svoje linije
+        float dist = mix(uStrayDist.x, uStrayDist.y, h.x) * uPxWorld;
+        float side = h.y < 0.5 ? -1.0 : 1.0;
+        float ang = (h.z - 0.5) * 1.1;                          // malo gore/dole od bocnog pravca
+        vec3 off = dist * (side * cos(ang) * uU + sin(ang) * uDir);
+        off += 0.05 * vec3(sin(uTime * 0.8 + aStray.w), cos(uTime * 0.7 + aStray.w * 1.3), 0.0);
         float g = smoothstep(0.12, 0.9, u);
         merge = g * g;                                        // polako krene, pa ubrza u tok
-        vec3 toward = p - start;
-        vec3 side = normalize(vec3(-toward.y, toward.x, 0.0) + 1e-4);
-        vec3 arc = side * sin(merge * 3.14159) * (h.z - 0.5) * 1.6;   // zakrivljen let
-        p = mix(start, p, merge) + arc;
+        vec3 arc = uDir * sin(merge * 3.14159) * (h.z - 0.5) * dist * 0.6;  // blago zakrivljen let
+        p = p + off * (1.0 - merge) + arc;
         strayAlpha = smoothstep(0.0, 0.1, u) * smoothstep(1.0, 0.93, u);
       }
 
@@ -249,6 +258,7 @@ function resize() {
   const visW = visH * camera.aspect;
   mat.uniforms.uCenter.value.set(camera.aspect > 1.2 ? visW * 0.2 : 0, 0, 0);
   mat.uniforms.uHalf.value.set(visW / 2, visH / 2);
+  mat.uniforms.uPxWorld.value = visH / h;
   mat.uniforms.uPx.value = renderer.getPixelRatio() * Math.max(1.4, h / 540);
 }
 addEventListener('resize', resize);
